@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import IO, Any, BinaryIO
+from typing import IO, Any, BinaryIO, Iterator
 from collections.abc import Iterable
 from jaxtyping import Float, Int
 
@@ -9,7 +9,13 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 
+from dataclasses import dataclass
+from collections import defaultdict
+import regex as re
+from multiprocessing import Pool, cpu_count
+import pickle
 
+import pdb
 
 def run_linear(
     d_in: int,
@@ -561,6 +567,145 @@ def get_tokenizer(
     raise NotImplementedError
 
 
+class Tokenizer:
+
+    def __init__(
+        self,
+        vocab: dict[int, bytes], 
+        merges: list[tuple[bytes, bytes]], 
+        special_tokens: list[str] | None = None):
+        """
+        Construct a tokenizer from a given vocabulary, list of merges, and (optionally) a list of special tokens.
+        """
+        self.vocab = vocab
+        self.merges = merges
+
+        if special_tokens:
+            for token_str in special_tokens:
+                token_bytes = token_str.encode("utf-8")
+                if token_bytes not in self.vocab.values():
+                    new_id = len(self.vocab)
+                    self.vocab[new_id] = token_bytes
+        
+        self.bytes_to_int = {v: k for k, v in self.vocab.items()}
+        self.int_to_bytes = {k: v for k, v in self.vocab.items()}
+
+    @classmethod
+    def from_files(
+        cls, 
+        vocab_filepath: str, 
+        merges_filepath: str, 
+        special_tokens: list[str] | None = None):
+        """
+        Class method that constructs and return a Tokenizer from a serialized vocabulary and list of merges
+        (in the same format that your BPE training code output) and (optionally) a list of special tokens.
+        """
+        with open(vocab_filepath, 'rb') as f:
+            vocab = pickle.load(f)
+        
+        with open(merges_filepath, 'rb') as f:
+            merges = pickle.load(f)
+
+        return cls(vocab, merges, special_tokens)
+
+
+    def encode(self, text: str) -> list[int]:
+        pass
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        pass
+
+    def decode(self, ids: list[int]) -> str:
+        pass
+
+
+
+
+
+def find_chunk_boundaries(
+    file: BinaryIO, 
+    desired_num_chunks: int, 
+    split_special_token: bytes
+) -> list[int]:
+    """
+    Chunk the file into parts that can be counted independently.
+    May return fewer chunks if the boundaries end up overlapping.
+    """
+    assert isinstance(split_special_token, bytes), (
+        "Must represent special token as a bytestring"
+    )
+
+    # Get total file size in bytes
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+
+    chunk_size = file_size // desired_num_chunks
+
+    # Initial guesses for chunk boundary locations, uniformly spaced
+    # Chunks start on previous index, don't include last index
+    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
+    chunk_boundaries[-1] = file_size
+
+    mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+
+    for bi in range(1, len(chunk_boundaries) - 1):
+        initial_position = chunk_boundaries[bi]
+        file.seek(initial_position)  # Start at boundary guess
+        while True:
+            mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
+
+            # If EOF, this boundary should be at the end of the file
+            if mini_chunk == b"":
+                chunk_boundaries[bi] = file_size
+                break
+
+            # Find the special token in the mini chunk
+            found_at = mini_chunk.find(split_special_token)
+            if found_at != -1:
+                chunk_boundaries[bi] = initial_position + found_at
+                break
+            initial_position += mini_chunk_size
+
+    # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
+    return sorted(set(chunk_boundaries))
+
+def pretokenize_chunk(
+    input_path: str, 
+    start: int, 
+    end: int, 
+    special_tokens: list
+    ) -> dict[tuple[bytes, ...], int]:
+        
+        with open(input_path, "rb") as f:
+            f.seek(start)
+            corpus_chunk = f.read(end - start).decode("utf-8", errors="ignore")
+        
+        split_pattern = "|".join(re.escape(s) for s in special_tokens)
+        corpus_chunk = re.split(split_pattern, corpus_chunk)
+
+        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        chunk_frequency_table = defaultdict(int)
+        for document in corpus_chunk:
+            if not document: 
+                continue
+            document_pretokenized = re.finditer(PAT, document)
+            for word in document_pretokenized:
+                word_pretokenized = tuple(bytes([b]) for b in word.group().encode('utf-8'))
+                if word_pretokenized:
+                    chunk_frequency_table[word_pretokenized] += 1
+
+        return chunk_frequency_table
+
+def get_pair_counts(frequency_table: dict[tuple[bytes, ...], int]) -> defaultdict[tuple[bytes, bytes], int]:
+    """Helper function to calculate initial pair counts."""
+    pair_counts = defaultdict(int)
+    for word, count in frequency_table.items():
+        for i in range(len(word) - 1):
+            pair_counts[(word[i], word[i+1])] += count
+    return pair_counts
+
+
 def run_train_bpe(
     input_path: str | os.PathLike,
     vocab_size: int,
@@ -569,23 +714,173 @@ def run_train_bpe(
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """Given the path to an input corpus, run train a BPE tokenizer and
     output its vocabulary and merges.
-
-    Args:
-        input_path (str | os.PathLike): Path to BPE tokenizer training data.
-        vocab_size (int): Total number of items in the tokenizer's vocabulary (including special tokens).
-        special_tokens (list[str]): A list of string special tokens to be added to the tokenizer vocabulary.
-            These strings will never be split into multiple tokens, and will always be
-            kept as a single token. If these special tokens occur in the `input_path`,
-            they are treated as any other string.
-
-    Returns:
-        tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-            vocab:
-                The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
-                to bytes (token bytes)
-            merges:
-                BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
-                representing that <token1> was merged with <token2>.
-                Merges are ordered by order of creation.
     """
-    raise NotImplementedError
+
+    ### initialize the vocab
+    vocab: dict[int, bytes] = {token_id: bytes([token_id]) for token_id in range(256)}
+    token_id = 256
+    for special_token in special_tokens:
+        vocab[token_id] = special_token.encode("utf-8")
+        token_id += 1
+
+    ### pre-tokenization
+    num_cpu = cpu_count() // 4
+    with open(input_path, "rb") as f:
+        boundaries = find_chunk_boundaries(
+            f, num_cpu, "".join(special_tokens).encode("utf-8"))
+
+    task_args = []
+    for i in range(len(boundaries) - 1):
+        task_args.append((input_path, boundaries[i], boundaries[i+1], special_tokens))
+
+    with Pool(num_cpu) as p:
+        chunk_frequency_tables = p.starmap(pretokenize_chunk, task_args)
+    # chunk_frequency_tables = [pretokenize_chunk(*args) for args in task_args]
+
+    frequency_table = defaultdict(int)
+    for chunk_frequency_table in chunk_frequency_tables:
+        for word_pretokenized, cnt in chunk_frequency_table.items():
+            frequency_table[word_pretokenized] += cnt
+
+    ### merges
+    merges: list[tuple[bytes, bytes]] = []
+
+    while len(vocab) < vocab_size:
+        # Calculate pair counts in every loop.
+        pair_counts = get_pair_counts(frequency_table)
+
+        if not pair_counts:
+            break
+
+        # This preserves the tie-breaking logic.
+        max_pair = max(pair_counts, key=lambda k: (pair_counts[k], k))
+
+        # Add the new merge and token to our vocabulary
+        merges.append(max_pair)
+        new_token = max_pair[0] + max_pair[1]
+        vocab[len(vocab)] = new_token
+
+        new_frequency_table = defaultdict(int)
+        for word, count in frequency_table.items():
+            i = 0
+            new_word = []
+            while i < len(word):
+                if i < len(word) - 1 and (word[i], word[i + 1]) == max_pair:
+                    new_word.append(new_token)
+                    i += 2
+                else:
+                    new_word.append(word[i])
+                    i += 1
+            new_frequency_table[tuple(new_word)] += count
+        
+        frequency_table = new_frequency_table
+
+    return vocab, merges
+
+###---------------------------------------my naive implementation------------------------------
+# def run_train_bpe(
+#     input_path: str | os.PathLike,
+#     vocab_size: int,
+#     special_tokens: list[str],
+#     **kwargs,
+# ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+#     """Given the path to an input corpus, run train a BPE tokenizer and
+#     output its vocabulary and merges.
+
+#     Args:
+#         input_path (str | os.PathLike): Path to BPE tokenizer training data.
+#         vocab_size (int): Total number of items in the tokenizer's vocabulary (including special tokens).
+#         special_tokens (list[str]): A list of string special tokens to be added to the tokenizer vocabulary.
+#             These strings will never be split into multiple tokens, and will always be
+#             kept as a single token. If these special tokens occur in the `input_path`,
+#             they are treated as any other string.
+
+#     Returns:
+#         tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+#             vocab:
+#                 The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
+#                 to bytes (token bytes)
+#             merges:
+#                 BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
+#                 representing that <token1> was merged with <token2>.
+#                 Merges are ordered by order of creation.
+#     """
+
+#     ### initialize the vocab
+#     vocab: dict[int, bytes] = {token_id: bytes([token_id]) for token_id in range(256)}
+#     token_id = 256
+#     for special_token in special_tokens:
+#         vocab[token_id] = special_token.encode("utf-8")
+#         token_id += 1
+
+#     ### pre-tokenization
+#     num_cpu = cpu_count()
+#     with open(input_path, "rb") as f:
+#         boundaries = find_chunk_boundaries(
+#             f, num_cpu*4, "".join(special_tokens).encode("utf-8"))
+
+#     # generate argument for paralell computing
+#     task_args = []
+#     for i in range(len(boundaries)-1):
+#         task_args.append((input_path, boundaries[i], boundaries[i+1], special_tokens))
+
+#     # paralell computing
+#     with Pool(num_cpu) as p:
+#         chunk_frequency_tables = p.starmap(pretokenize_chunk, task_args) 
+
+#     # collect the paralell computing results
+#     frequency_table = defaultdict(int)
+#     for chunk_frequency_table in chunk_frequency_tables:
+#         for word_pretokenized, cnt in chunk_frequency_table.items():
+#             frequency_table[word_pretokenized] += cnt
+
+#     ### compute BPE merges
+#     merges: list[tuple[bytes, bytes]] = list()
+
+#     # pdb.set_trace()
+#     while len(vocab) < vocab_size:
+    
+#         #initialize the frequency count of bytes pair
+#         pair_counts = defaultdict(int)
+#         for word_pretokenized, cnt in frequency_table.items():
+#             for i in range(len(word_pretokenized)-1):
+#                 pair = (word_pretokenized[i], word_pretokenized[i+1])
+#                 pair_counts[pair] += cnt
+
+#         # check if no more merges available
+#         if not pair_counts:
+#             break
+        
+#         # identify the max pair with max lexi order
+#         max_pair = max(pair_counts, key=lambda k: (pair_counts.get(k), k))
+#         new_token = max_pair[0] + max_pair[1]
+
+#         # update pair to vocab and merges
+#         merges.append((max_pair[0], max_pair[1]))
+#         vocab[len(vocab)] = new_token
+
+#         # merge the new tokens
+#         changes = []
+#         for word_pretokenized, cnt in frequency_table.items():
+#             indices = [i for i in range(len(word_pretokenized)-1) if word_pretokenized[i:i+2] == max_pair]
+#             if indices:
+#                 i = 0
+#                 new_word_pretokenized = []
+#                 while i <= len(word_pretokenized)-1:
+#                     if i in indices:
+#                         new_word_pretokenized.append(new_token)
+#                         i += 2
+#                     else:
+#                         new_word_pretokenized.append(word_pretokenized[i])
+#                         i += 1
+#                 new_word_pretokenized = tuple(new_word_pretokenized)
+#                 changes.append((word_pretokenized, new_word_pretokenized, cnt))
+        
+#         for word_pretokenized, new_word_pretokenized, cnt in changes:
+#             frequency_table[new_word_pretokenized] += cnt
+#             del frequency_table[word_pretokenized]
+    
+#     return vocab, merges
+###---------------------------------------my naive implementation------------------------------
+
+
