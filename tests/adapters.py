@@ -564,7 +564,7 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    return Tokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
 
 
 class Tokenizer:
@@ -577,11 +577,17 @@ class Tokenizer:
         """
         Construct a tokenizer from a given vocabulary, list of merges, and (optionally) a list of special tokens.
         """
+        if not special_tokens:
+            special_tokens = []
+
         self.vocab = vocab
         self.merges = merges
+        self.special_tokens = special_tokens
 
-        if special_tokens:
-            for token_str in special_tokens:
+        self.merge_ranks = {pair: i for i, pair in enumerate(self.merges)}
+
+        if self.special_tokens:
+            for token_str in self.special_tokens:
                 token_bytes = token_str.encode("utf-8")
                 if token_bytes not in self.vocab.values():
                     new_id = len(self.vocab)
@@ -589,6 +595,7 @@ class Tokenizer:
         
         self.bytes_to_int = {v: k for k, v in self.vocab.items()}
         self.int_to_bytes = {k: v for k, v in self.vocab.items()}
+        self.special_token_bytes = {s.encode("utf-8") for s in self.special_tokens}
 
     @classmethod
     def from_files(
@@ -607,16 +614,78 @@ class Tokenizer:
             merges = pickle.load(f)
 
         return cls(vocab, merges, special_tokens)
+    
+    def _bpe_merge(self, word_bytes: bytes) -> list[int]:
+        """Helper function to perform BPE on a single word."""
+        parts = [bytes([b]) for b in word_bytes]
 
+        while len(parts) > 1:
+            pairs = [(parts[i], parts[i+1]) for i in range(len(parts) - 1)]
+            best_pair = min(pairs, key=lambda p: self.merge_ranks.get(p, float('inf')))
+
+            if best_pair not in self.merge_ranks:
+                break
+
+            for i in range(len(parts) - 1):
+                if (parts[i], parts[i+1]) == best_pair:
+                    parts = parts[:i] + [parts[i] + parts[i+1]] + parts[i+2:]
+                    break
+        
+        return [self.bytes_to_int[part] for part in parts]
 
     def encode(self, text: str) -> list[int]:
-        pass
+        """
+        Encode an input text into a sequence of token IDs.
+        """
+        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+
+        # split the text based on special tokens
+        sorted_special_tokens = sorted(self.special_tokens, key=len, reverse=True)
+        split_pattern = "|".join(re.escape(s) for s in sorted_special_tokens)
+
+        if split_pattern:
+            sentences = re.split(f"({split_pattern})", text)
+        else:
+            sentences = [text]
+
+        # pretokenize the text
+        text_pretokenized = []
+        for sentence in sentences:
+            if sentence in self.special_tokens:
+                text_pretokenized.append((sentence.encode("utf-8")))
+                continue
+            for word in re.finditer(PAT, sentence):
+                text_pretokenized.append(word.group().encode("utf-8"))
+
+        # merge the text tokens
+        final_token_ids = []
+        for word_pretokenized in text_pretokenized:
+            if word_pretokenized in self.special_token_bytes:
+                final_token_ids.append(self.bytes_to_int[word_pretokenized])
+            else:
+                final_token_ids.extend(self._bpe_merge(word_pretokenized))
+
+        return final_token_ids
+
+
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        pass
+        """
+        Given an iterable of strings (e.g., a Python file handle), return a generator that lazily yields token IDs. 
+        This is required for memory-eﬀicient tokenization of large files that we cannot directly load into memory.
+        """
+        for line in iterable:
+            yield from self.encode(line)
+
 
     def decode(self, ids: list[int]) -> str:
-        pass
+        """
+        Decode a sequence of token IDs into text.
+        """
+        id_decodes = b"".join(self.int_to_bytes.get(token_id, b'') for token_id in ids)
+        text = id_decodes.decode("utf-8", errors='replace')
+
+        return text
 
 
 
