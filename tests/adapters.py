@@ -7,15 +7,45 @@ from jaxtyping import Float, Int
 
 import numpy.typing as npt
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from dataclasses import dataclass
 from collections import defaultdict
 import regex as re
 from multiprocessing import Pool, cpu_count
 import pickle
-
+import math
 import pdb
+
+from einops import rearrange, einsum
+
+
+class Linear(nn.Module):
+    def __init__(
+        self, 
+        in_features: int,
+        out_features: int, 
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None):
+        """Construct a linear transformation module."""
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+
+        self.W = nn.Parameter(
+            torch.empty((out_features, in_features), device=device, dtype=dtype)
+        )
+
+        mean = 0.0
+        std = math.sqrt(2.0 / (self.in_features + self.out_features))
+
+        nn.init.trunc_normal_(self.W, mean, std, -3*std, 3*std)
+
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the linear transformation to the input."""
+        return einsum(x, self.W, "... input_dim, output_dim input_dim -> ... output_dim")
+
 
 def run_linear(
     d_in: int,
@@ -35,9 +65,35 @@ def run_linear(
     Returns:
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
+    linear = Linear(d_in, d_out)
+    state_dict_to_load = {"W": weights}
+    linear.load_state_dict(state_dict_to_load)
+    return linear(in_features)
 
-    raise NotImplementedError
 
+class Embedding(nn.Module):
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int, 
+        device: torch.device | None = None, 
+        dtype: torch.dtype | None = None):
+        """Construct an embedding module."""
+        super().__init__()
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+
+        self.embeddings = nn.Parameter(torch.empty(self.num_embeddings,
+                                      self.embedding_dim,
+                                      device=device,
+                                      dtype=dtype))
+        nn.init.trunc_normal_(self.embeddings, 0, 1, -3, 3)
+
+    def forward(
+        self,
+        token_ids: torch.Tensor
+        ) -> torch.Tensor:
+        return self.embeddings[token_ids]
 
 def run_embedding(
     vocab_size: int,
@@ -58,7 +114,12 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
 
-    raise NotImplementedError
+    embedding = Embedding(vocab_size, d_model)
+    state_dict_to_load = {"embeddings": weights}
+    embedding.load_state_dict(state_dict_to_load)
+    return embedding(token_ids)
+
+
 
 
 def run_swiglu(
@@ -803,8 +864,8 @@ def run_train_bpe(
         task_args.append((input_path, boundaries[i], boundaries[i+1], special_tokens))
 
     with Pool(num_cpu) as p:
-        chunk_frequency_tables = p.starmap(pretokenize_chunk, task_args)
-    # chunk_frequency_tables = [pretokenize_chunk(*args) for args in task_args]
+        # chunk_frequency_tables = p.starmap(pretokenize_chunk, task_args)
+        chunk_frequency_tables = [pretokenize_chunk(*args) for args in task_args]
 
     frequency_table = defaultdict(int)
     for chunk_frequency_table in chunk_frequency_tables:
