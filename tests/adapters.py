@@ -17,7 +17,7 @@ import pickle
 import math
 import pdb
 
-from einops import rearrange, einsum
+from einops import rearrange, einsum, reduce
 
 
 class Linear(nn.Module):
@@ -118,8 +118,6 @@ def run_embedding(
     state_dict_to_load = {"embeddings": weights}
     embedding.load_state_dict(state_dict_to_load)
     return embedding(token_ids)
-
-
 
 
 def run_swiglu(
@@ -426,6 +424,35 @@ def run_transformer_lm(
     raise NotImplementedError
 
 
+class RMSNorm(nn.Module):
+    def __init__(
+        self, 
+        d_model: int, 
+        eps: float = 1e-5, 
+        device=None, 
+        dtype=None):
+        """Construct the RMSNorm module."""
+        super().__init__()
+
+        self.d_model = d_model
+        self.eps = eps
+
+        g = torch.ones(self.d_model, device=device, dtype=dtype)
+        self.g = nn.Parameter(g)
+
+    def forward(
+        self, 
+        x: torch.Tensor) -> torch.Tensor:
+        """Process an input tensor of shape (batch_size, sequence_length, d_model) and return a tensor of the same shape."""
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        RMS_x = torch.sqrt((1 / self.d_model) * reduce(x**2, "... d_model -> ... 1", "sum") + self.eps)
+        RMS_norm = x / RMS_x * rearrange(self.g, "d_model -> 1 1 d_model")
+
+        return RMS_norm.to(in_dtype)
+
+
 def run_rmsnorm(
     d_model: int,
     eps: float,
@@ -446,7 +473,12 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    raise NotImplementedError
+    rmsnorm = RMSNorm(d_model, eps)
+    state_dict_to_load = {"g": weights}
+    rmsnorm.load_state_dict(state_dict_to_load)
+
+    return rmsnorm(in_features)
+
 
 
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
@@ -854,7 +886,7 @@ def run_train_bpe(
         token_id += 1
 
     ### pre-tokenization
-    num_cpu = cpu_count() // 4
+    num_cpu = cpu_count() // 2
     with open(input_path, "rb") as f:
         boundaries = find_chunk_boundaries(
             f, num_cpu, "".join(special_tokens).encode("utf-8"))
@@ -862,10 +894,11 @@ def run_train_bpe(
     task_args = []
     for i in range(len(boundaries) - 1):
         task_args.append((input_path, boundaries[i], boundaries[i+1], special_tokens))
-
-    with Pool(num_cpu) as p:
+        break
+    
+    # with Pool(1) as p:
         # chunk_frequency_tables = p.starmap(pretokenize_chunk, task_args)
-        chunk_frequency_tables = [pretokenize_chunk(*args) for args in task_args]
+    chunk_frequency_tables = [pretokenize_chunk(*args) for args in task_args]
 
     frequency_table = defaultdict(int)
     for chunk_frequency_table in chunk_frequency_tables:
