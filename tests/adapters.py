@@ -119,6 +119,28 @@ def run_embedding(
     embedding.load_state_dict(state_dict_to_load)
     return embedding(token_ids)
 
+class SwiGLU(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None
+        ):
+        super().__init__()
+        d_ff = (int(8.0 / 3.0 * d_model) // 64 * 64)
+        
+        self.ffn_1 = Linear(d_model, d_ff, device=device, dtype=dtype)
+        self.ffn_2 = Linear(d_ff, d_model, device=device, dtype=dtype)
+        self.ffn_3 = Linear(d_model, d_ff, device=device, dtype=dtype)
+        self.silu = SiLU()
+
+    def forward(
+        self,
+        x: torch.Tensor):
+        return self.ffn_2((self.silu(self.ffn_1(x)) * self.ffn_3(x)))
+
+
 
 def run_swiglu(
     d_model: int,
@@ -149,7 +171,13 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    swiglu = SwiGLU(d_model, d_ff)
+    swiglu.ffn_1.W.data = w1_weight
+    swiglu.ffn_2.W.data = w2_weight
+    swiglu.ffn_3.W.data = w3_weight
+
+    return swiglu(in_features)
+
 
 
 def run_scaled_dot_product_attention(
@@ -480,7 +508,18 @@ def run_rmsnorm(
     return rmsnorm(in_features)
 
 
+class SiLU(nn.Module):
+    def __init__(
+        self,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None):
+        super().__init__()
 
+    def forward(
+        self, 
+        x: torch.Tensor) -> torch.Tensor:
+        return x * torch.sigmoid(x)
+        
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
     """Given a tensor of inputs, return the output of applying SiLU
     to each element.
@@ -492,7 +531,8 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    silu = SiLU()
+    return silu(in_features)
 
 
 def run_get_batch(
