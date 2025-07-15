@@ -179,6 +179,24 @@ def run_swiglu(
     return swiglu(in_features)
 
 
+class DotProductAttention(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.softmax = SoftMax()
+
+    def forward(
+        self,
+        Q: torch.Tensor,
+        K: torch.Tensor,
+        V: torch.Tensor,
+        mask: torch.Tensor | None) -> torch.Tensor:
+        
+        d_k = Q.shape[-1]
+        pre_softmax_score = einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") / math.sqrt(d_k)
+        if mask is not None:
+            pre_softmax_score.masked_fill_(mask==0.0, float("-inf"))
+        softmax_score = self.softmax(pre_softmax_score, -1)
+        return einsum(softmax_score, V, "... queries keys, ... keys d_v -> ... queries d_v")
 
 def run_scaled_dot_product_attention(
     Q: Float[Tensor, " ... queries d_k"],
@@ -198,7 +216,8 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    raise NotImplementedError
+    scaled_dot_product_attention = DotProductAttention()
+    return scaled_dot_product_attention(Q, K, V, mask)
 
 
 def run_multihead_self_attention(
