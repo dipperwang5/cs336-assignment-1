@@ -588,6 +588,24 @@ def run_get_batch(
     """
     raise NotImplementedError
 
+class SoftMax(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        dim: int):
+        
+        x_max = torch.max(x, dim=dim, keepdim=True).values
+        x_stable = x - x_max
+        
+        exp_x = torch.exp(x_stable)
+        sum_exp_x = torch.sum(exp_x, dim=dim, keepdim=True)
+        
+        return exp_x / sum_exp_x
+        
+
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
     """
@@ -602,7 +620,8 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise NotImplementedError
+    softmax = SoftMax()
+    return softmax(in_features, dim)
 
 
 def run_cross_entropy(inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]) -> Float[Tensor, ""]:
