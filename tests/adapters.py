@@ -17,7 +17,7 @@ import pickle
 import math
 import pdb
 
-from einops import rearrange, einsum, reduce
+from einops import rearrange, einsum, reduce, repeat
 
 
 class Linear(nn.Module):
@@ -354,9 +354,6 @@ def run_multihead_self_attention_with_rope(
     return multi_head_self_attention(in_features, token_positions)
 
 
-
-
-
 class RoPE(nn.Module):
     def __init__(
         self,
@@ -411,6 +408,42 @@ def run_rope(
     """
     rope = RoPE(theta, d_k, max_seq_len)
     return rope(in_query_or_key, token_positions)
+
+
+class TransformerBlock(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: int | None,
+        max_seq_len: int | None):
+        super().__init__()
+
+        self.rms_norm_1 = RMSNorm(d_model)
+        self.rms_norm_2 = RMSNorm(d_model)
+        
+        if theta is not None and max_seq_len is not None:
+            self.rope = RoPE(theta, d_model // num_heads, max_seq_len)
+        else:
+            self.rope = None
+        self.multi_head_self_attention = MultiheadSelfAttention(d_model, num_heads, self.rope)
+
+        self.ffn = SwiGLU(d_model, d_ff)
+
+    def forward(
+        self,
+        x: torch.Tensor):
+        # x: " batch sequence_length d_model"
+        token_positions = repeat(torch.arange(x.shape[-2]), "sequence_length -> batch sequence_length", batch=x.shape[0]) # batch sequence_length
+        attention_x = self.multi_head_self_attention(self.rms_norm_1(x), token_positions) # " batch sequence_length d_model"
+         
+        x = x + attention_x # " batch sequence_length d_model"
+
+        ffn_x = self.ffn(self.rms_norm_2(x)) # " batch sequence_length d_model"
+
+        return ffn_x + x
+
 
 
 def run_transformer_block(
@@ -483,7 +516,18 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    transformer_block = TransformerBlock(d_model, num_heads, d_ff, theta, max_seq_len)
+    transformer_block.rms_norm_1.g.data = weights["ln1.weight"]
+    transformer_block.multi_head_self_attention.WK.W.data = weights["attn.k_proj.weight"]
+    transformer_block.multi_head_self_attention.WQ.W.data = weights["attn.q_proj.weight"]
+    transformer_block.multi_head_self_attention.WV.W.data = weights["attn.v_proj.weight"]
+    transformer_block.multi_head_self_attention.WO.W.data = weights["attn.output_proj.weight"]
+    transformer_block.rms_norm_2.g.data = weights["ln2.weight"]
+    transformer_block.ffn.ffn_1.W.data = weights["ffn.w1.weight"]
+    transformer_block.ffn.ffn_2.W.data = weights["ffn.w2.weight"]
+    transformer_block.ffn.ffn_3.W.data = weights["ffn.w3.weight"]
+
+    return transformer_block(in_features)
 
 
 def run_transformer_lm(
