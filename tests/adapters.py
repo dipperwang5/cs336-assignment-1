@@ -219,6 +219,52 @@ def run_scaled_dot_product_attention(
     scaled_dot_product_attention = DotProductAttention()
     return scaled_dot_product_attention(Q, K, V, mask)
 
+class MultiheadSelfAttention(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        rope: RoPE | None = None):
+
+        super().__init__()
+
+        self.d_model = d_model
+        self.head = num_heads
+        self.scaled_dot_product_attention = DotProductAttention()
+
+        self.WQ = Linear(self.d_model, self.d_model)
+        self.WK = Linear(self.d_model, self.d_model)
+        self.WV = Linear(self.d_model, self.d_model)
+        self.WO = Linear(self.d_model, self.d_model)
+
+        self.pos_encode = rope
+
+    def forward(
+        self,
+        in_features: torch.Tensor,
+        token_positions: torch.Tensor | None = None):
+        
+        Q = self.WQ(in_features)
+        K = self.WK(in_features)
+        V = self.WV(in_features)
+
+        sequence_length = Q.shape[-2]
+        causal_mask = ~torch.triu(torch.ones_like(torch.empty(sequence_length,sequence_length)), diagonal=1).bool()
+
+        multi_head_Q = rearrange(Q, "... sequence_length (h d_k) -> h ... sequence_length d_k", h = self.head)
+        multi_head_K = rearrange(K, "... sequence_length (h d_k) -> h ... sequence_length d_k", h = self.head)
+        multi_head_V = rearrange(V, "... sequence_length (h d_v) -> h ... sequence_length d_v", h = self.head)
+
+        if self.pos_encode is not None:
+            multi_head_Q = self.pos_encode(multi_head_Q, token_positions)
+            multi_head_K = self.pos_encode(multi_head_K, token_positions)
+
+        multi_head = self.scaled_dot_product_attention(multi_head_Q, multi_head_K, multi_head_V, causal_mask)
+        multi_head = rearrange(multi_head, "h ... sequence_length d_v -> ... sequence_length (h d_v)")
+        multi_head_self_attention = self.WO(multi_head)
+
+        return multi_head_self_attention
+    
 
 def run_multihead_self_attention(
     d_model: int,
@@ -251,7 +297,13 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    multi_head_self_attention = MultiheadSelfAttention(d_model, num_heads)
+    multi_head_self_attention.WQ.W.data = q_proj_weight
+    multi_head_self_attention.WK.W.data = k_proj_weight
+    multi_head_self_attention.WV.W.data = v_proj_weight
+    multi_head_self_attention.WO.W.data = o_proj_weight
+
+    return multi_head_self_attention(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -291,7 +343,19 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    rope = RoPE(theta, d_model // num_heads, max_seq_len)
+
+    multi_head_self_attention = MultiheadSelfAttention(d_model, num_heads, rope)
+    multi_head_self_attention.WQ.W.data = q_proj_weight
+    multi_head_self_attention.WK.W.data = k_proj_weight
+    multi_head_self_attention.WV.W.data = v_proj_weight
+    multi_head_self_attention.WO.W.data = o_proj_weight
+
+    return multi_head_self_attention(in_features, token_positions)
+
+
+
+
 
 class RoPE(nn.Module):
     def __init__(
