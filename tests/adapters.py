@@ -274,6 +274,38 @@ def run_multihead_self_attention_with_rope(
     """
     raise NotImplementedError
 
+class RoPE(nn.Module):
+    def __init__(
+        self,
+        theta: float,
+        d_k: int,
+        max_seq_leng: int,
+        device: torch.device | None = None):
+        super().__init__()
+
+        theta_kd = theta ** (-2 * torch.arange(0, int(d_k//2), device=device) / d_k) #d_k / 2
+        pos = torch.arange(0, max_seq_leng, device=device)
+        angle = einsum(pos, theta_kd, "i, k -> i k") #max_seq_len d_k/2
+        self.register_buffer("cos", torch.cos(angle), persistent=False)
+        self.register_buffer("sin", torch.sin(angle), persistent=False)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        token_positions: torch.Tensor) -> torch.Tensor:
+        # x (... seq_len, d_k)
+        # token_positions (... seq_len)
+        cos = self.cos[token_positions] # (... seq_len d_k/2)
+        sin = self.sin[token_positions]
+
+        x1 = x[..., 0::2] #(... seq_len d_k/2)
+        x2 = x[..., 1::2]
+
+        rotated_x1 = cos * x1 - sin * x2 # (... seq_len d_k/2)
+        rotated_x2 = sin * x1 + cos * x2
+
+        rotated_x = rearrange([rotated_x1, rotated_x2], 's ... d_half -> ... (d_half s)')
+        return rotated_x
 
 def run_rope(
     d_k: int,
@@ -294,7 +326,8 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    raise NotImplementedError
+    rope = RoPE(theta, d_k, max_seq_len)
+    return rope(in_query_or_key, token_positions)
 
 
 def run_transformer_block(
@@ -927,7 +960,7 @@ def run_train_bpe(
     num_cpu = cpu_count()
     with open(input_path, "rb") as f:
         boundaries = find_chunk_boundaries(
-            f, num_cpu*16, "".join(special_tokens).encode("utf-8"))
+            f, num_cpu*8, "".join(special_tokens).encode("utf-8"))
 
     task_args = []
     for i in range(len(boundaries) - 1):
