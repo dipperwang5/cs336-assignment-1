@@ -802,6 +802,27 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
     softmax = SoftMax()
     return softmax(in_features, dim)
 
+class CrossEntropy(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.softmax = SoftMax()
+
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor):
+
+        #logits (batch_size vocab_size)
+        # targets (batch_size)
+        logit_max = reduce(logits, "batch_size vocab_size -> batch_size 1", "max")
+        logits_shift = logits - logit_max #(batch_size vocab_size)
+        logit_target = logits_shift[torch.arange(logits_shift.shape[0]), targets]
+        
+        log_sum_exp_logits = torch.log(reduce(torch.exp(logits_shift), "batch_size vocab_size -> batch_size", "sum"))
+
+        return reduce(log_sum_exp_logits - logit_target, "batch_size -> 1", "mean")
+        
+
 
 def run_cross_entropy(inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]) -> Float[Tensor, ""]:
     """Given a tensor of inputs and targets, compute the average cross-entropy
@@ -816,7 +837,8 @@ def run_cross_entropy(inputs: Float[Tensor, " batch_size vocab_size"], targets: 
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    cross_entropy = CrossEntropy()
+    return cross_entropy(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
