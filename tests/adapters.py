@@ -530,6 +530,43 @@ def run_transformer_block(
     return transformer_block(in_features)
 
 
+class Transformer_LM(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: int | None,
+        context_length: int | None,
+        vocab_size: int,
+        num_layers: int):
+        super().__init__()
+
+        self.num_layers = num_layers
+
+        self.blocks = nn.ModuleList(
+                    [TransformerBlock(d_model, num_heads, d_ff, theta, context_length)
+                    for _ in range(self.num_layers)])
+        
+        self.embedding = Embedding(vocab_size, d_model)
+        self.norm = RMSNorm(d_model)
+        self.ffn = Linear(d_model, vocab_size)
+        self.softmax = SoftMax()
+
+    def forward(
+        self,
+        x: torch.Tensor):
+        # x (batch_size sequence_length)
+        x = self.embedding(x) #(batch_size sequence_length d_model)
+        for block in self.blocks:
+            x = block(x) #(batch_size sequence_length d_model)
+        x = self.norm(x) #(batch_size sequence_length d_model)
+        x = self.ffn(x) #(batch_size sequence_length vocab_size)
+        # x = self.softmax(x, dim=-1) #(batch_size sequence_length vocab_size)
+
+        return x
+    
+
 def run_transformer_lm(
     vocab_size: int,
     context_length: int,
@@ -609,7 +646,22 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    transformer_lm = Transformer_LM(d_model, num_heads, d_ff, rope_theta, context_length, vocab_size, num_layers)
+    transformer_lm.embedding.embeddings.data = weights["token_embeddings.weight"]
+    for layer in range(num_layers):
+        transformer_lm.blocks[layer].rms_norm_1.g.data = weights[f"layers.{layer}.ln1.weight"]
+        transformer_lm.blocks[layer].multi_head_self_attention.WK.W.data = weights[f"layers.{layer}.attn.k_proj.weight"]
+        transformer_lm.blocks[layer].multi_head_self_attention.WQ.W.data = weights[f"layers.{layer}.attn.q_proj.weight"]
+        transformer_lm.blocks[layer].multi_head_self_attention.WV.W.data = weights[f"layers.{layer}.attn.v_proj.weight"]
+        transformer_lm.blocks[layer].multi_head_self_attention.WO.W.data = weights[f"layers.{layer}.attn.output_proj.weight"]
+        transformer_lm.blocks[layer].rms_norm_2.g.data = weights[f"layers.{layer}.ln2.weight"]
+        transformer_lm.blocks[layer].ffn.ffn_1.W.data = weights[f"layers.{layer}.ffn.w1.weight"]
+        transformer_lm.blocks[layer].ffn.ffn_2.W.data = weights[f"layers.{layer}.ffn.w2.weight"]
+        transformer_lm.blocks[layer].ffn.ffn_3.W.data = weights[f"layers.{layer}.ffn.w3.weight"]
+    transformer_lm.norm.g.data = weights["ln_final.weight"]
+    transformer_lm.ffn.W.data = weights["lm_head.weight"]
+    
+    return transformer_lm(in_indices)
 
 
 class RMSNorm(nn.Module):
