@@ -1,6 +1,7 @@
 from tests.adapters import Tokenizer
 import pathlib
 import random
+import time
 random.seed(0)
 
 if __name__ == '__main__':
@@ -18,15 +19,18 @@ if __name__ == '__main__':
 
     content = []
     with open(DATA_PATH, "rb") as f:
-        for i in range(1000):
+        for i in range(10000):
             line_content = f.readline().decode("utf-8")
             content.append(line_content)
     
-    sampled_content = random.sample(content, 10)
+    sampled_content = random.sample(content, 10000)
     text = "".join(line_content for line_content in sampled_content)
 
+    start_time = time.time()
     tokens = tokenizer.encode(text)
+    end_time = time.time()
+    
     print(f"length of the text {len(text)}")
     print(f"length of the tokens {len(tokens)}")
     print(f"compression ratio {len(text) / len(tokens)}")
-    
+    print(f"throughput {len(text) / (end_time - start_time)}")
