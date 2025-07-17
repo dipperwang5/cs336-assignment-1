@@ -853,11 +853,58 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
     raise NotImplementedError
 
 
+class AdamW(torch.optim.Optimizer):
+    def __init__(
+        self,
+        params: Iterable[torch.nn.Parameter],
+        lr: Float = 1e-3,
+        weight_decay: Float = 0.01,
+        betas: tuple[Float, Float] = (0.9, 0.999),
+        eps: Float = 1e-8,
+        ):
+
+        defaults = {"lr": lr, "weight_decay": weight_decay, 
+                    "betas": betas, "eps": eps}
+        super().__init__(params, defaults)
+
+    def step(self):
+        loss = None
+        for group in self.param_groups:
+            lr = group["lr"] # Get the learning rate.
+            weight_decay = group["weight_decay"]
+            betas = group["betas"]
+            eps = group["eps"]
+
+            beta_1, beta_2 = betas
+
+            for p in group["params"]: 
+                if p.grad is None:
+                    continue
+                state = self.state[p] # Get state associated with p.
+                m = state.get("m", torch.zeros(p.shape)) # Get m, first moment vector
+                v = state.get("v", torch.zeros(p.shape)) # Get v, second moment vector
+                t = state.get("t", 1)
+
+                grad = p.grad.data # Get the gradient of loss with respect to p.
+                m = beta_1 * m + (1 - beta_1) * grad
+                v = beta_2 * v + (1 - beta_2) * grad**2
+
+                lr_t = lr * math.sqrt(1 - beta_2**t) / (1 - beta_1**t)
+                
+                p.data -= lr_t * m / (torch.sqrt(v) + eps) # Update weight tensor in-place.
+                p.data -= lr * weight_decay * p.data
+
+                state["t"] = t + 1 # Increment iteration number.
+                state["m"] = m
+                state["v"] = v
+
+        return loss
+
 def get_adamw_cls() -> type[torch.optim.Optimizer]:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -1180,7 +1227,7 @@ def run_train_bpe(
     num_cpu = cpu_count()
     with open(input_path, "rb") as f:
         boundaries = find_chunk_boundaries(
-            f, num_cpu*8, "".join(special_tokens).encode("utf-8"))
+            f, num_cpu, "".join(special_tokens).encode("utf-8"))
 
     task_args = []
     for i in range(len(boundaries) - 1):
