@@ -773,7 +773,6 @@ class GetBatch(nn.Module):
         return batched_input_tokens, batched_output_tokens
 
 
-
 def run_get_batch(
     dataset: npt.NDArray, batch_size: int, context_length: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -796,9 +795,6 @@ def run_get_batch(
     """
     batches = GetBatch(dataset, batch_size, context_length, device)
     return batches.get_batch()
-
-
-
 
 
 class SoftMax(nn.Module):
@@ -1029,7 +1025,12 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    model_dict = model.state_dict()
+    optimizer_dict = optimizer.state_dict()
+    output_dict = {"model": model_dict,
+                   "optimizer": optimizer_dict,
+                   "iteration": iteration}
+    torch.save(output_dict, out)
 
 
 def run_load_checkpoint(
@@ -1050,7 +1051,15 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    saved_dict = torch.load(src)
+    model_dict = saved_dict["model"]
+    parameter_dict = saved_dict["optimizer"]
+    iteration = saved_dict["iteration"]
+
+    model.load_state_dict(model_dict)
+    optimizer.load_state_dict(parameter_dict)
+
+    return iteration
 
 
 def get_tokenizer(
