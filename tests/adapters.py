@@ -745,6 +745,35 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
     return silu(in_features)
 
 
+class GetBatch(nn.Module):
+
+    def __init__(
+        self,
+        dataset: npt.NDArray,
+        batch_size: int,
+        context_length: int,
+        device: str = "cpu"):
+        super().__init__()
+    
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.context_length = context_length
+        self.device = device
+
+    def get_batch(self):
+        sampled_start_tokens = torch.randint(low=0, high=len(self.dataset) - self.context_length, size=(self.batch_size,))
+        input_tokens = [torch.from_numpy(self.dataset[start_token:start_token+self.context_length])
+                        .to(dtype=torch.long, device=self.device)
+                        for start_token in sampled_start_tokens]
+        output_tokens = [torch.from_numpy(self.dataset[start_token+1:start_token+self.context_length+1])
+                        .to(dtype=torch.long, device=self.device)
+                        for start_token in sampled_start_tokens]
+        batched_input_tokens = rearrange(input_tokens, "batches context_length -> batches context_length")
+        batched_output_tokens = rearrange(output_tokens, "batches context_length -> batches context_length")
+        return batched_input_tokens, batched_output_tokens
+
+
+
 def run_get_batch(
     dataset: npt.NDArray, batch_size: int, context_length: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -765,7 +794,12 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    batches = GetBatch(dataset, batch_size, context_length, device)
+    return batches.get_batch()
+
+
+
+
 
 class SoftMax(nn.Module):
     def __init__(self):
