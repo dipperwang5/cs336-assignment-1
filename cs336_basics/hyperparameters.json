@@ -1,0 +1,15 @@
+{
+  "vocab_size": 3000,
+  "context_length": 10,
+  "d_model": 24,
+  "num_layers": 2,
+  "num_heads": 3,
+  "d_ff": 49,
+  "rope_theta": 0.1,
+  "batch_size": 32,
+  "lr": 1e-3,
+  "weight_decay": 0.01,
+  "betas": [0.9, 0.999],
+  "num_train_steps":10,
+  "DATA_PATH_TRAIN":"/Users/kewang/assignment1-basics/data/TinyStoriesV2-GPT4-valid-tokenized.pkl"
+}
