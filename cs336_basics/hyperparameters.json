@@ -10,6 +10,11 @@
   "lr": 1e-3,
   "weight_decay": 0.01,
   "betas": [0.9, 0.999],
-  "num_train_steps":10,
-  "DATA_PATH_TRAIN":"/Users/kewang/assignment1-basics/data/TinyStoriesV2-GPT4-valid-tokenized.pkl"
+  "num_train_steps": 19,
+  "num_eval_steps": 5,
+  "DATA_PATH_TRAIN":"/Users/kewang/assignment1-basics/data/TinyStoriesV2-GPT4-valid-tokenized.npy",
+  "DATA_PATH_VALID":"/Users/kewang/assignment1-basics/data/TinyStoriesV2-GPT4-valid-tokenized.npy",
+  "MODEL_CHECK_POINT_PATH":"/Users/kewang/assignment1-basics/models",
+  "save_interval": 10,
+  "val_interval": 3
 }

@@ -1,70 +1,11 @@
-# import torch
-# from torch import nn
-
-
-# # Deliverable: Write a script that runs a training loop to train your model on user-provided input.
-# # In particular, we recommend that your training script allow for (at least) the following:
-# # • Ability to configure and control the various model and optimizer hyperparameters.
-# # • Memory-eﬀicient loading of training and validation large datasets with np.memmap.
-# # • Serializing checkpoints to a user-provided path.
-# # • Periodically logging training and validation performance (e.g., to console and/or an external service like Weights and Biases).a
-
-
-# # model hyperparameters
-# vocab_size: int,
-# context_length: int,
-# d_model: int,
-# num_layers: int,
-# num_heads: int,
-# d_ff: int,
-# rope_theta: float,
-# batch_size
-
-# # optimizer hyperparameters
-# params: Iterable[torch.nn.Parameter],
-# lr: Float = 1e-3,
-# weight_decay: Float = 0.01,
-# betas: tuple[Float, Float] = (0.9, 0.999),
-
-
-
-# def train(name: str, get_batch,
-#           D: int, num_layers: int,
-#           B: int, num_train_steps: int, lr: float):
-#     model = Cruncher(dim=D, num_layers=0).to(get_device())
-#     optimizer = SGD(model.parameters(), lr=0.01)
-#     for t in range(num_train_steps):
-#         # Get data
-#         x, y = get_batch(B=B)
-#         # Forward (compute loss)
-#         pred_y = model(x)
-#         loss = F.mse_loss(pred_y, y)
-#         # Backward (compute gradients)
-#         loss.backward()
-#         # Update parameters
-#         optimizer.step()
-#         optimizer.zero_grad(set_to_none=True)
-
-
-
-# vocab_size: int,
-# context_length: int,
-# d_model: int,
-# num_layers: int,
-# num_heads: int,
-# d_ff: int,
-# rope_theta: float,
-# batch_size
-
-#!/usr/bin/env python3
-
 import argparse
 import json
 import pickle
-from tests.adapters import Transformer_LM, AdamW, GetBatch, CrossEntropy
+from tests.adapters import Transformer_LM, AdamW, GetBatch, CrossEntropy, run_save_checkpoint
 from einops import rearrange
 import numpy as np
 import torch
+import pathlib
 
 def get_device(index: int = 0) -> torch.device:
     """Try to use the GPU if possible, otherwise, use CPU."""
@@ -111,30 +52,57 @@ def main():
 
 
     print("initilize the data")
-    with open(params["DATA_PATH_TRAIN"], "rb") as f:
-        dataset = pickle.load(f)
-    # dataset = np.load(params["DATA_PATH_TRAIN"], mmap_mode="r")
-    batches = GetBatch(dataset,
+    train_dataset = np.memmap(params["DATA_PATH_TRAIN"], dtype=np.uint16)
+    valid_dataset = np.memmap(params["DATA_PATH_VALID"], dtype=np.uint16)
+    train_batches = GetBatch(train_dataset,
+                    params["batch_size"],
+                    params["context_length"],
+                    get_device())
+    valid_batches = GetBatch(valid_dataset,
                     params["batch_size"],
                     params["context_length"],
                     get_device())
 
     cross_entropy = CrossEntropy()
 
-    for _ in range(params["num_train_steps"]):
+    for iter in range(params["num_train_steps"]):
         # Get the batched dataset
-        x, y = batches.get_batch()
+        x, y = train_batches.get_batch()
         # Forward (compute loss)
         pred_y = model(x)
-        loss = cross_entropy(
+        train_loss = cross_entropy(
                 rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
                 rearrange(y, "batch_size seq_len -> (batch_size seq_len)"))
         # Backward (compute gradients)
-        loss.backward()
+        train_loss.backward()
         # Update parameters
         optimizer.step()
         # Set gradient to 0
         optimizer.zero_grad(set_to_none=True)
+
+        if iter != 0 and iter % params["save_interval"] == 0:
+            run_save_checkpoint(model, optimizer, iter, pathlib.Path(params["MODEL_CHECK_POINT_PATH"]) / f"checkpoint_{iter}.pt")
+
+        if iter != 0 and iter % params["val_interval"] == 0:
+            print(f"training loss {train_loss.item()}")
+
+            model.eval()  # Set the model to evaluation mode
+    
+            valid_losses = []
+            for _ in range(params["num_eval_steps"]):
+                x, y = valid_batches.get_batch()
+                pred_y = model(x)
+                valid_loss = cross_entropy(
+                    rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
+                    rearrange(y, "batch_size seq_len -> (batch_size seq_len)")
+                )
+                valid_losses.append(valid_loss.item())
+                
+            print(f"validation loss {np.mean(valid_losses)}")
+            
+            model.train()  # Set the model back to training mode
+
+
 
 if __name__ == '__main__':
     main()
