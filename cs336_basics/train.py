@@ -87,18 +87,19 @@ def main():
             print(f"training loss {train_loss.item()}")
 
             model.eval()  # Set the model to evaluation mode
-    
-            valid_losses = []
-            for _ in range(params["num_eval_steps"]):
-                x, y = valid_batches.get_batch()
-                pred_y = model(x)
-                valid_loss = cross_entropy(
-                    rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
-                    rearrange(y, "batch_size seq_len -> (batch_size seq_len)")
-                )
-                valid_losses.append(valid_loss.item())
+
+            with torch.no_grad():
+                valid_losses = []
+                for _ in range(params["num_eval_steps"]):
+                    x, y = valid_batches.get_batch()
+                    pred_y = model(x)
+                    valid_loss = cross_entropy(
+                        rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
+                        rearrange(y, "batch_size seq_len -> (batch_size seq_len)")
+                    )
+                    valid_losses.append(valid_loss.item())
                 
-            print(f"validation loss {np.mean(valid_losses)}")
+                print(f"validation loss {np.mean(valid_losses)}")
             
             model.train()  # Set the model back to training mode
 
