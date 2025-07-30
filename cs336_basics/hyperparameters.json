@@ -1,5 +1,5 @@
 {
-  "vocab_size": 3000,
+  "vocab_size": 10000,
   "context_length": 10,
   "d_model": 24,
   "num_layers": 2,

@@ -1,6 +1,5 @@
 import argparse
 import json
-import pickle
 from tests.adapters import Transformer_LM, AdamW, GetBatch, CrossEntropy, run_save_checkpoint
 from einops import rearrange
 import numpy as np

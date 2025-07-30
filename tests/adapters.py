@@ -543,6 +543,7 @@ class Transformer_LM(nn.Module):
         super().__init__()
 
         self.num_layers = num_layers
+        self.contex_length = context_length
 
         self.blocks = nn.ModuleList(
                     [TransformerBlock(d_model, num_heads, d_ff, theta, context_length)
@@ -565,6 +566,41 @@ class Transformer_LM(nn.Module):
         # x = self.softmax(x, dim=-1) #(batch_size sequence_length vocab_size)
 
         return x
+    
+    @torch.no_grad()
+    def generate(
+        self,
+        x: torch.Tensor,
+        max_token_len: int,
+        temp: float = 1.0,
+        top_k: float | None = None,
+        end_token_id: int | None = None
+    ) -> torch.Tensor:
+        softmax = SoftMax()
+
+        if x.dim() == 1:
+            x = rearrange(x, "... -> 1 ...")
+        
+        original_sequence_length = x.shape[-1]
+        
+        for _ in range(max_token_len):
+            x = x if x.shape[-1] <= self.contex_length else x[:, :self.contex_length] #batch_size, seq_len
+            logits = self.forward(x)
+            next_token_logits = logits[:, -1, :] #batch_size, vocab_size
+            next_token_logits_temp_normalized = next_token_logits / temp
+
+            probs = softmax(next_token_logits_temp_normalized, dim=-1) #batch_size, vocab_size
+
+            next_token_id = torch.multinomial(probs, 1) #batch_size, 1
+            if end_token_id is not None:
+                if (next_token_id == end_token_id).all():
+                    break
+            x = torch.cat((x, next_token_id), dim=-1) #batch_size, seq_len+1
+        
+        return x[:, original_sequence_length:]
+
+
+
     
 
 def run_transformer_lm(
