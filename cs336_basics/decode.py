@@ -18,7 +18,7 @@ def decoding(
     device: str,
     max_token_len: int = 256,
     temp: float = 1.0,
-    top_k: float = 0.95
+    top_p: float = 0.95
 ) -> str:
 
     model.eval()
@@ -27,7 +27,7 @@ def decoding(
     prompt = torch.tensor(prompt, dtype=torch.long, device=device)
     end_token_id = tokenizor.encode("<|endoftext|>")[0] # the tokenizer has an issue when generating the vocab
     
-    output_tokens = model.generate(prompt, max_token_len, temp, top_k, end_token_id)
+    output_tokens = model.generate(prompt, max_token_len, temp, top_p, end_token_id)
     output_text = tokenizor.decode(output_tokens)
 
     model.train()

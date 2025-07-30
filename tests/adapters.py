@@ -563,8 +563,6 @@ class Transformer_LM(nn.Module):
             x = block(x) #(batch_size sequence_length d_model)
         x = self.norm(x) #(batch_size sequence_length d_model)
         x = self.ffn(x) #(batch_size sequence_length vocab_size)
-        # x = self.softmax(x, dim=-1) #(batch_size sequence_length vocab_size)
-
         return x
     
     @torch.no_grad()
@@ -573,7 +571,7 @@ class Transformer_LM(nn.Module):
         x: torch.Tensor,
         max_token_len: int,
         temp: float = 1.0,
-        top_k: float | None = None,
+        top_p: float | None = None,
         end_token_id: int | None = None
     ) -> torch.Tensor:
         softmax = SoftMax()
@@ -588,6 +586,16 @@ class Transformer_LM(nn.Module):
             logits = self.forward(x)
             next_token_logits = logits[:, -1, :] #batch_size, vocab_size
             next_token_logits_temp_normalized = next_token_logits / temp
+
+            if top_p:
+                sorted_logits, sorted_indices = torch.sort(next_token_logits_temp_normalized, descending=True)
+                sorted_probs = run_softmax(sorted_logits, dim=-1)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                sorted_mask = cumulative_probs > top_p
+                sorted_mask[..., 1:] = sorted_mask[..., :-1].clone()
+                sorted_mask[..., 0] = False
+                mask = sorted_mask.scatter(1, sorted_indices, sorted_mask)
+                next_token_logits_temp_normalized = next_token_logits_temp_normalized.masked_fill(mask, float("-inf"))
 
             probs = softmax(next_token_logits_temp_normalized, dim=-1) #batch_size, vocab_size
 
