@@ -5,6 +5,9 @@ from einops import rearrange
 import numpy as np
 import torch
 import pathlib
+import wandb
+
+wandb.login()
 
 def get_device(index: int = 0) -> torch.device:
     """Try to use the GPU if possible, otherwise, use CPU."""
@@ -26,6 +29,11 @@ def main():
 
     with args.json_file as f:
         params = json.load(f)
+
+    run = wandb.init(
+        project="llm-assignment-hw1",
+        config=params,
+    )
 
     print("--- Parameters ---")
     for key, value in params.items():
@@ -84,6 +92,7 @@ def main():
 
         if iter != 0 and iter % params["val_interval"] == 0:
             print(f"training loss {train_loss.item()}")
+            run.log({"training loss": train_loss.item()})
 
             model.eval()  # Set the model to evaluation mode
 
@@ -99,7 +108,8 @@ def main():
                     valid_losses.append(valid_loss.item())
                 
                 print(f"validation loss {np.mean(valid_losses)}")
-            
+                run.log({"valid loss": valid_loss.item()})
+
             model.train()  # Set the model back to training mode
 
 
