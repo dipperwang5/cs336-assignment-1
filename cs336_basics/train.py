@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import pathlib
 import wandb
+import time
 
 wandb.login()
 
@@ -72,6 +73,7 @@ def main():
 
     cross_entropy = CrossEntropy()
 
+    start_time = time.time()
     for iter in range(params["num_train_steps"]):
         # Get the batched dataset
         x, y = train_batches.get_batch()
@@ -82,6 +84,9 @@ def main():
                 rearrange(y, "batch_size seq_len -> (batch_size seq_len)"))
         # Backward (compute gradients)
         train_loss.backward()
+
+        total_grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+
         # Update parameters
         optimizer.step()
         # Set gradient to 0
@@ -92,11 +97,15 @@ def main():
 
         if iter != 0 and iter % params["val_interval"] == 0:
             print(f"training loss {train_loss.item()}")
-            run.log({"training loss": train_loss.item()})
 
             model.eval()  # Set the model to evaluation mode
 
             with torch.no_grad():
+
+                total_weight_norm = 0.0
+                for param in model.parameters():
+                    total_weight_norm += param.data.norm(2).item()
+
                 valid_losses = []
                 for _ in range(params["num_eval_steps"]):
                     x, y = valid_batches.get_batch()
@@ -106,9 +115,22 @@ def main():
                         rearrange(y, "batch_size seq_len -> (batch_size seq_len)")
                     )
                     valid_losses.append(valid_loss.item())
+
+                mean_valid_loss = np.mean(valid_losses)
+                print(f"Validation loss {mean_valid_loss}")
                 
-                print(f"validation loss {np.mean(valid_losses)}")
-                run.log({"valid loss": valid_loss.item()})
+                elapsed_time = time.time() - start_time
+                
+                log_metrics = {
+                        "time/wall_time": elapsed_time,
+                        "time/iteration": iter,
+                        "loss/train": train_loss.item(),
+                        "loss/validation": mean_valid_loss,
+                        "norms/gradient": total_grad_norm,
+                        "norms/weight": total_weight_norm,
+                    }
+                
+                run.log(log_metrics)
 
             model.train()  # Set the model back to training mode
 
