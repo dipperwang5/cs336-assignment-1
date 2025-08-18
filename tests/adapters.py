@@ -4,6 +4,7 @@ import os
 from typing import IO, Any, BinaryIO, Iterator
 from collections.abc import Iterable
 from jaxtyping import Float, Int
+from tqdm import tqdm
 
 import numpy.typing as npt
 import torch
@@ -1229,8 +1230,6 @@ class Tokenizer:
 
         return final_token_ids
 
-
-
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         """
         Given an iterable of strings (e.g., a Python file handle), return a generator that lazily yields token IDs. 
@@ -1248,10 +1247,6 @@ class Tokenizer:
         text = id_decodes.decode("utf-8", errors='replace')
 
         return text
-
-
-
-
 
 def find_chunk_boundaries(
     file: BinaryIO, 
@@ -1358,7 +1353,7 @@ def run_train_bpe(
     num_cpu = cpu_count()
     with open(input_path, "rb") as f:
         boundaries = find_chunk_boundaries(
-            f, num_cpu, "".join(special_tokens).encode("utf-8"))
+            f, num_cpu*3, "".join(special_tokens).encode("utf-8"))
 
     task_args = []
     for i in range(len(boundaries) - 1):
@@ -1376,6 +1371,8 @@ def run_train_bpe(
     ### merges
     merges: list[tuple[bytes, bytes]] = []
 
+    pbar = tqdm(total=vocab_size, initial=len(vocab), desc="BPE Merges 📊")
+
     while len(vocab) < vocab_size:
         # Calculate pair counts in every loop.
         pair_counts = get_pair_counts(frequency_table)
@@ -1391,6 +1388,8 @@ def run_train_bpe(
         new_token = max_pair[0] + max_pair[1]
         vocab[len(vocab)] = new_token
 
+        pbar.update(1)
+
         new_frequency_table = defaultdict(int)
         for word, count in frequency_table.items():
             i = 0
@@ -1405,6 +1404,8 @@ def run_train_bpe(
             new_frequency_table[tuple(new_word)] += count
         
         frequency_table = new_frequency_table
+
+    pbar.close()
 
     return vocab, merges
 
