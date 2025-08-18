@@ -138,7 +138,7 @@ if __name__ == '__main__':
         tokenizer=tokenizer,
         input_path=DATA_PATH_VALID,
         output_dir=OUTPUT_DIR_VALID,
-        chunk_size=200_000_000 # You can adjust this chunk size
+        chunk_size=20_000_000 # You can adjust this chunk size
     )
 
     # Process the training file
@@ -146,7 +146,7 @@ if __name__ == '__main__':
         tokenizer=tokenizer,
         input_path=DATA_PATH_TRAIN,
         output_dir=OUTPUT_DIR_TRAIN,
-        chunk_size=200_000_000 # Keeping chunk size consistent
+        chunk_size=20_000_000 # Keeping chunk size consistent
     )
 
     print("\nTokenization complete. Chunks are saved in the respective directories.")
