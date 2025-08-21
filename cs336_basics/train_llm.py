@@ -5,10 +5,8 @@ from einops import rearrange
 import numpy as np
 import torch
 import pathlib
-import wandb
+import mlflow
 import time
-
-wandb.login()
 
 def get_device(index: int = 0) -> torch.device:
     """Try to use the GPU if possible, otherwise, use CPU."""
@@ -23,7 +21,7 @@ def main():
         'json_file',
         nargs='?',
         type=argparse.FileType('r'),
-        default='/Users/kewang/assignment1-basics/cs336_basics/hyperparameters.json',
+        default='/home/ke_wang/cs336-assignment-1/cs336_basics/hyperparameters.json',
         help="Path to the JSON parameter file."
     )
     args = parser.parse_args()
@@ -31,110 +29,107 @@ def main():
     with args.json_file as f:
         params = json.load(f)
 
-    run = wandb.init(
-        project="llm-assignment-hw1",
-        config=params,
-    )
+    with mlflow.start_run() as run:
+        print(f"--- MLflow Run ID: {run.info.run_id} ---")
 
-    print("--- Parameters ---")
-    for key, value in params.items():
-        print(f"{key}: {value}")
+        mlflow.log_params(params)
 
-    params["betas"] = tuple(beta for beta in params["betas"])
+        print("--- Parameters ---")
+        for key, value in params.items():
+            print(f"{key}: {value}")
 
-    print("initilize the LM")
-    model = Transformer_LM(params["d_model"],
-                            params["num_heads"],
-                            params["d_ff"],
-                            params["rope_theta"],
-                            params["context_length"],
-                            params["vocab_size"],
-                            params["num_layers"])\
-                            .to(get_device())
+        params["betas"] = tuple(beta for beta in params["betas"])
 
-    print("initial the optimizer")
-    optimizer = AdamW(model.parameters(),
-                      params["lr"],
-                      params["weight_decay"],
-                      params["betas"])
+        print("initilize the LM")
+        model = Transformer_LM(params["d_model"],
+                                params["num_heads"],
+                                params["d_ff"],
+                                params["rope_theta"],
+                                params["context_length"],
+                                params["vocab_size"],
+                                params["num_layers"])\
+                                .to(get_device())
 
-
-    print("initilize the data")
-    train_dataset = np.memmap(params["DATA_PATH_TRAIN"], dtype=np.uint16)
-    valid_dataset = np.memmap(params["DATA_PATH_VALID"], dtype=np.uint16)
-    train_batches = GetBatch(train_dataset,
-                    params["batch_size"],
-                    params["context_length"],
-                    get_device())
-    valid_batches = GetBatch(valid_dataset,
-                    params["batch_size"],
-                    params["context_length"],
-                    get_device())
-
-    cross_entropy = CrossEntropy()
-
-    start_time = time.time()
-    for iter in range(params["num_train_steps"]):
-        # Get the batched dataset
-        x, y = train_batches.get_batch()
-        # Forward (compute loss)
-        pred_y = model(x)
-        train_loss = cross_entropy(
-                rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
-                rearrange(y, "batch_size seq_len -> (batch_size seq_len)"))
-        # Backward (compute gradients)
-        train_loss.backward()
-
-        total_grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
-
-        # Update parameters
-        optimizer.step()
-        # Set gradient to 0
-        optimizer.zero_grad(set_to_none=True)
-
-        if iter != 0 and iter % params["save_interval"] == 0:
-            run_save_checkpoint(model, optimizer, iter, pathlib.Path(params["MODEL_CHECK_POINT_PATH"]) / f"checkpoint.pt")
-
-        if iter != 0 and iter % params["val_interval"] == 0:
-            print(f"training loss {train_loss.item()}")
-
-            model.eval()  # Set the model to evaluation mode
-
-            with torch.no_grad():
-
-                total_weight_norm = 0.0
-                for param in model.parameters():
-                    total_weight_norm += param.data.norm(2).item()
-
-                valid_losses = []
-                for _ in range(params["num_eval_steps"]):
-                    x, y = valid_batches.get_batch()
-                    pred_y = model(x)
-                    valid_loss = cross_entropy(
-                        rearrange(pred_y, "batch_size seq_len vocab_size -> (batch_size seq_len) vocab_size"),
-                        rearrange(y, "batch_size seq_len -> (batch_size seq_len)")
-                    )
-                    valid_losses.append(valid_loss.item())
-
-                mean_valid_loss = np.mean(valid_losses)
-                print(f"Validation loss {mean_valid_loss}")
-                
-                elapsed_time = time.time() - start_time
-                
-                log_metrics = {
-                        "time/wall_time": elapsed_time,
-                        "time/iteration": iter,
-                        "loss/train": train_loss.item(),
-                        "loss/validation": mean_valid_loss,
-                        "norms/gradient": total_grad_norm,
-                        "norms/weight": total_weight_norm,
-                    }
-                
-                run.log(log_metrics)
-
-            model.train()  # Set the model back to training mode
+        print("initial the optimizer")
+        optimizer = AdamW(model.parameters(),
+                          params["lr"],
+                          params["weight_decay"],
+                          params["betas"])
 
 
+        print("initilize the data")
+        train_dataset = np.memmap(params["DATA_PATH_TRAIN"], dtype=np.uint16)
+        valid_dataset = np.memmap(params["DATA_PATH_VALID"], dtype=np.uint16)
+        train_batches = GetBatch(train_dataset,
+                        params["batch_size"],
+                        params["context_length"],
+                        get_device())
+        valid_batches = GetBatch(valid_dataset,
+                        params["batch_size"],
+                        params["context_length"],
+                        get_device())
+
+        cross_entropy = CrossEntropy()
+
+        start_time = time.time()
+        for iter in range(params["num_train_steps"]):
+            # Get the batched dataset
+            x, y = train_batches.get_batch()
+            # Forward (compute loss)
+            pred_y = model(x)
+            train_loss = cross_entropy(
+                    rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
+                    rearrange(y, "batch_size seq_len -> (batch_size seq_len)"))
+            # Backward (compute gradients)
+            train_loss.backward()
+
+            total_grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+
+            # Update parameters
+            optimizer.step()
+            # Set gradient to 0
+            optimizer.zero_grad(set_to_none=True)
+
+            if iter != 0 and iter % params["save_interval"] == 0:
+                run_save_checkpoint(model, optimizer, iter, pathlib.Path(params["MODEL_CHECK_POINT_PATH"]) / f"checkpoint.pt")
+
+            if iter != 0 and iter % params["val_interval"] == 0:
+                print(f"training loss {train_loss.item()}")
+
+                model.eval()  # Set the model to evaluation mode
+
+                with torch.no_grad():
+                    total_weight_norm = 0.0
+                    for param in model.parameters():
+                        total_weight_norm += param.data.norm(2).item()
+
+                    valid_losses = []
+                    for _ in range(params["num_eval_steps"]):
+                        x, y = valid_batches.get_batch()
+                        pred_y = model(x)
+                        valid_loss = cross_entropy(
+                            rearrange(pred_y, "batch_size seq_len vocab_size -> (batch_size seq_len) vocab_size"),
+                            rearrange(y, "batch_size seq_len -> (batch_size seq_len)")
+                        )
+                        valid_losses.append(valid_loss.item())
+
+                    mean_valid_loss = np.mean(valid_losses)
+                    print(f"Validation loss {mean_valid_loss}")
+                    
+                    elapsed_time = time.time() - start_time
+                    
+                    log_metrics = {
+                            "time_wall_time": elapsed_time, # Note: MLflow doesn't like slashes in metric names
+                            "time_iteration": iter,
+                            "loss_train": train_loss.item(),
+                            "loss_validation": mean_valid_loss,
+                            "norms_gradient": total_grad_norm,
+                            "norms_weight": total_weight_norm,
+                        }
+                    
+                    mlflow.log_metrics(log_metrics, step=iter)
+
+                model.train()  # Set the model back to training mode
 
 if __name__ == '__main__':
     main()
