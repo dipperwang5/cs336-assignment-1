@@ -609,9 +609,6 @@ class Transformer_LM(nn.Module):
         return x[:, original_sequence_length:]
 
 
-
-    
-
 def run_transformer_lm(
     vocab_size: int,
     context_length: int,
