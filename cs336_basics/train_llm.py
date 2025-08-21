@@ -44,13 +44,13 @@ def main():
 
     print("initilize the LM")
     model = Transformer_LM(params["d_model"],
-                                    params["num_heads"],
-                                    params["d_ff"],
-                                    params["rope_theta"],
-                                    params["context_length"],
-                                    params["vocab_size"],
-                                    params["num_layers"])\
-                                    .to(get_device())
+                            params["num_heads"],
+                            params["d_ff"],
+                            params["rope_theta"],
+                            params["context_length"],
+                            params["vocab_size"],
+                            params["num_layers"])\
+                            .to(get_device())
 
     print("initial the optimizer")
     optimizer = AdamW(model.parameters(),
@@ -93,7 +93,7 @@ def main():
         optimizer.zero_grad(set_to_none=True)
 
         if iter != 0 and iter % params["save_interval"] == 0:
-            run_save_checkpoint(model, optimizer, iter, pathlib.Path(params["MODEL_CHECK_POINT_PATH"]) / f"checkpoint_{iter}.pt")
+            run_save_checkpoint(model, optimizer, iter, pathlib.Path(params["MODEL_CHECK_POINT_PATH"]) / f"checkpoint.pt")
 
         if iter != 0 and iter % params["val_interval"] == 0:
             print(f"training loss {train_loss.item()}")
@@ -111,7 +111,7 @@ def main():
                     x, y = valid_batches.get_batch()
                     pred_y = model(x)
                     valid_loss = cross_entropy(
-                        rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
+                        rearrange(pred_y, "batch_size seq_len vocab_size -> (batch_size seq_len) vocab_size"),
                         rearrange(y, "batch_size seq_len -> (batch_size seq_len)")
                     )
                     valid_losses.append(valid_loss.item())
