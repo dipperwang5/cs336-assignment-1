@@ -2,6 +2,7 @@ import argparse
 import json
 from tests.adapters import Transformer_LM, AdamW, GetBatch, CrossEntropy, run_save_checkpoint
 from einops import rearrange
+from tqdm import tqdm
 import numpy as np
 import torch
 import pathlib
@@ -71,14 +72,16 @@ def main():
 
         cross_entropy = CrossEntropy()
 
+        pbar = tqdm(total=params["num_train_steps"], desc="Training Progress")
         start_time = time.time()
         for iter in range(params["num_train_steps"]):
+            pbar.update(1)
             # Get the batched dataset
             x, y = train_batches.get_batch()
             # Forward (compute loss)
             pred_y = model(x)
             train_loss = cross_entropy(
-                    rearrange(pred_y, "batch_size seq_len d_model -> (batch_size seq_len) d_model"),
+                    rearrange(pred_y, "batch_size seq_len vocab_size -> (batch_size seq_len) vocab_size"),
                     rearrange(y, "batch_size seq_len -> (batch_size seq_len)"))
             # Backward (compute gradients)
             train_loss.backward()
@@ -130,6 +133,6 @@ def main():
                     mlflow.log_metrics(log_metrics, step=iter)
 
                 model.train()  # Set the model back to training mode
-
+        pbar.close()
 if __name__ == '__main__':
     main()

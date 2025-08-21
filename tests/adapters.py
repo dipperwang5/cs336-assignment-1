@@ -129,7 +129,6 @@ class SwiGLU(nn.Module):
         dtype: torch.dtype | None = None
         ):
         super().__init__()
-        d_ff = (int(8.0 / 3.0 * d_model) // 64 * 64)
         
         self.ffn_1 = Linear(d_model, d_ff, device=device, dtype=dtype)
         self.ffn_2 = Linear(d_ff, d_model, device=device, dtype=dtype)
@@ -250,7 +249,7 @@ class MultiheadSelfAttention(nn.Module):
         V = self.WV(in_features)
 
         sequence_length = Q.shape[-2]
-        causal_mask = ~torch.triu(torch.ones_like(torch.empty(sequence_length,sequence_length)), diagonal=1).bool()
+        causal_mask = ~torch.triu(torch.ones_like(torch.empty(sequence_length,sequence_length, device=Q.device)), diagonal=1).bool()
 
         multi_head_Q = rearrange(Q, "... sequence_length (h d_k) -> h ... sequence_length d_k", h = self.head)
         multi_head_K = rearrange(K, "... sequence_length (h d_k) -> h ... sequence_length d_k", h = self.head)
@@ -436,7 +435,7 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor):
         # x: " batch sequence_length d_model"
-        token_positions = repeat(torch.arange(x.shape[-2]), "sequence_length -> batch sequence_length", batch=x.shape[0]) # batch sequence_length
+        token_positions = repeat(torch.arange(x.shape[-2], device=x.device), "sequence_length -> batch sequence_length", batch=x.shape[0]) # batch sequence_length
         attention_x = self.multi_head_self_attention(self.rms_norm_1(x), token_positions) # " batch sequence_length d_model"
          
         x = x + attention_x # " batch sequence_length d_model"
@@ -544,7 +543,7 @@ class Transformer_LM(nn.Module):
         super().__init__()
 
         self.num_layers = num_layers
-        self.contex_length = context_length
+        self.context_length = context_length
 
         self.blocks = nn.ModuleList(
                     [TransformerBlock(d_model, num_heads, d_ff, theta, context_length)
@@ -583,7 +582,7 @@ class Transformer_LM(nn.Module):
         original_sequence_length = x.shape[-1]
         
         for _ in range(max_token_len):
-            x = x if x.shape[-1] <= self.contex_length else x[:, :self.contex_length] #batch_size, seq_len
+            x = x if x.shape[-1] <= self.context_length else x[:, :self.context_length] #batch_size, seq_len
             logits = self.forward(x)
             next_token_logits = logits[:, -1, :] #batch_size, vocab_size
             next_token_logits_temp_normalized = next_token_logits / temp
@@ -969,8 +968,8 @@ class AdamW(torch.optim.Optimizer):
                 if p.grad is None:
                     continue
                 state = self.state[p] # Get state associated with p.
-                m = state.get("m", torch.zeros(p.shape)) # Get m, first moment vector
-                v = state.get("v", torch.zeros(p.shape)) # Get v, second moment vector
+                m = state.get("m", torch.zeros(p.shape, device=p.device)) # Get m, first moment vector
+                v = state.get("v", torch.zeros(p.shape, device=p.device)) # Get v, second moment vector
                 t = state.get("t", 1)
 
                 grad = p.grad.data # Get the gradient of loss with respect to p.

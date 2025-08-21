@@ -10,11 +10,11 @@
   "lr": 1e-3,
   "weight_decay": 0.01,
   "betas": [0.9, 0.999],
-  "num_train_steps": 10,
+  "num_train_steps": 40000,
   "num_eval_steps": 10,
   "DATA_PATH_TRAIN":"/home/ke_wang/cs336-assignment-1/data/train_tokenized.npy",
   "DATA_PATH_VALID":"/home/ke_wang/cs336-assignment-1/data/valid_tokenized.npy",
   "MODEL_CHECK_POINT_PATH":"/home/ke_wang/cs336-assignment-1/models",
-  "save_interval": 2,
-  "val_interval": 2
+  "save_interval": 1000,
+  "val_interval": 100
 }
